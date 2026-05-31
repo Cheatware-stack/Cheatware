@@ -30,6 +30,10 @@ local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 local Camera = Workspace.CurrentCamera
 local LocalPlayer = Players.LocalPlayer
+
+Workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
+    Camera = Workspace.CurrentCamera
+end)
 local Mouse = LocalPlayer:GetMouse()
 
 -- [[ Config ]]
@@ -983,6 +987,9 @@ local function CreateUI()
         return btn
     end
 
+    -- Track per-tab canvas heights
+    local tabHeights = {}
+
     -- [[ Build ESP Tab ]]
     yOffset = 0
     local espContent = tabContents[1]
@@ -999,6 +1006,7 @@ local function CreateUI()
     CreateSection(espContent, "World")
     CreateToggle(espContent, "World.FOVCircle", "FOV Circle", "Draw aimbot FOV circle")
     CreateToggle(espContent, "World.Crosshair", "Crosshair", "Custom crosshair")
+    tabHeights[1] = yOffset + 20
 
     -- [[ Build Aimbot Tab ]]
     yOffset = 0
@@ -1014,6 +1022,7 @@ local function CreateUI()
     CreateToggle(aimContent, "Aimbot.TeamCheck", "Team Check", "Ignore teammates")
     CreateToggle(aimContent, "Aimbot.VisibleCheck", "Visibility Check", "Only target visible players")
     CreateToggle(aimContent, "Aimbot.WallCheck", "Wall Check", "Check for walls")
+    tabHeights[2] = yOffset + 20
 
     -- [[ Build Silent Aim Tab ]]
     yOffset = 0
@@ -1028,13 +1037,11 @@ local function CreateUI()
     CreateToggle(silentContent, "SilentAim.TeamCheck", "Team Check", "Ignore teammates")
     CreateToggle(silentContent, "SilentAim.VisibleCheck", "Visibility Check", "Only target visible players")
     CreateToggle(silentContent, "SilentAim.WallCheck", "Wall Check", "Check for walls")
+    tabHeights[3] = yOffset + 20
 
-    -- Update canvas sizes
-    for _, content in ipairs(tabContents) do
-        local layout = Instance.new("UIListLayout")
-        layout.Parent = content
-        layout:Destroy()
-        content.CanvasSize = UDim2.new(0, 0, 0, yOffset + 20)
+    -- Update canvas sizes per tab
+    for i, content in ipairs(tabContents) do
+        content.CanvasSize = UDim2.new(0, 0, 0, tabHeights[i])
     end
 
     return Main
@@ -1130,7 +1137,7 @@ RunService:BindToRenderStep("CheatwareLoop", Enum.RenderPriority.Camera.Value + 
 
         -- Calculate box dimensions
         local headScreen, headOnScreen = Camera:WorldToScreenPoint(headPos + Vector3.new(0, 0.5, 0))
-        local rootScreen, rootOnScreen = Camera:WorldToScreenPoint(rootPos - Vector3.new(0, 0, 0))
+        local rootScreen, rootOnScreen = Camera:WorldToScreenPoint(rootPos)
 
         if not headOnScreen and not rootOnScreen then
             for _, v in pairs(store) do
@@ -1237,7 +1244,7 @@ RunService:BindToRenderStep("CheatwareLoop", Enum.RenderPriority.Camera.Value + 
 
     -- Cleanup ESP for players that left
     for player, _ in pairs(ESPCache) do
-        if not Players:FindFirstChild(player.Name) then
+        if typeof(player) == "Instance" and not Players:FindFirstChild(player.Name) then
             ESPCache:Remove(player)
         end
     end
