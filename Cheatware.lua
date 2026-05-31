@@ -163,14 +163,14 @@ local ESPCache = {}
 function ESPCache:Create(player)
     if self[player] then return end
     local store = {
-        BoxOutline = Drawings:New("Square", {Visible = false, Transparency = 1, Thickness = 3, Color = Color3.new(0, 0, 0)}),
-        Box = Drawings:New("Square", {Visible = false, Transparency = 1, Thickness = 1, Color = Color3.new(255, 255, 255)}),
-        Tracer = Drawings:New("Line", {Visible = false, Transparency = 1, Thickness = 1, Color = Color3.new(255, 255, 255)}),
-        Name = Drawings:New("Text", {Visible = false, Transparency = 1, Size = 13, Center = true, Outline = true, Color = Color3.new(255, 255, 255)}),
-        HealthText = Drawings:New("Text", {Visible = false, Transparency = 1, Size = 13, Center = true, Outline = true, Color = Color3.new(255, 255, 255)}),
-        DistanceText = Drawings:New("Text", {Visible = false, Transparency = 1, Size = 12, Center = true, Outline = true, Color = Color3.new(180, 180, 180)}),
-        HealthBarOutline = Drawings:New("Square", {Visible = false, Transparency = 1, Thickness = 1, Color = Color3.new(0, 0, 0)}),
-        HealthBar = Drawings:New("Square", {Visible = false, Transparency = 1, Thickness = 1, Color = Color3.new(80, 200, 120)}),
+        BoxOutline = Drawings:New("Square", {Visible = false, Transparency = 1, Thickness = 3, Color = Color3.fromRGB(0, 0, 0)}),
+        Box = Drawings:New("Square", {Visible = false, Transparency = 1, Thickness = 1, Color = Color3.fromRGB(255, 255, 255)}),
+        Tracer = Drawings:New("Line", {Visible = false, Transparency = 1, Thickness = 1, Color = Color3.fromRGB(255, 255, 255)}),
+        Name = Drawings:New("Text", {Visible = false, Transparency = 1, Size = 13, Center = true, Outline = true, Color = Color3.fromRGB(255, 255, 255)}),
+        HealthText = Drawings:New("Text", {Visible = false, Transparency = 1, Size = 13, Center = true, Outline = true, Color = Color3.fromRGB(255, 255, 255)}),
+        DistanceText = Drawings:New("Text", {Visible = false, Transparency = 1, Size = 12, Center = true, Outline = true, Color = Color3.fromRGB(180, 180, 180)}),
+        HealthBarOutline = Drawings:New("Square", {Visible = false, Transparency = 1, Thickness = 1, Color = Color3.fromRGB(0, 0, 0)}),
+        HealthBar = Drawings:New("Square", {Visible = false, Transparency = 1, Thickness = 1, Color = Color3.fromRGB(80, 200, 120)}),
     }
     self[player] = store
 end
@@ -226,7 +226,22 @@ end
 
 function Aimbot:Execute()
     if not Config.Aimbot.Enabled then return end
-    if not UserInputService:IsMouseButtonPressed(Config.Aimbot.Keybind) then return end
+
+    local function isKeybindPressed(keybind)
+        if typeof(keybind) ~= "EnumItem" then
+            return false
+        end
+
+        if keybind.EnumType == Enum.UserInputType then
+            return UserInputService:IsMouseButtonPressed(keybind)
+        elseif keybind.EnumType == Enum.KeyCode then
+            return UserInputService:IsKeyDown(keybind)
+        end
+
+        return false
+    end
+
+    if not isKeybindPressed(Config.Aimbot.Keybind) then return end
 
     local target = self:GetClosestTarget()
     if not target then return end
@@ -610,10 +625,19 @@ local function CreateUI()
         toggleCircle.Parent = toggleBg
 
         local keys = {}
-            for part in configPath:gmatch("[%w_]+") do
-                table.insert(keys, part)
+        for part in configPath:gmatch("[%w_]+") do
+            table.insert(keys, part)
+        end
+
+        local function getConfigValue()
+            local obj = Config
+            for i = 1, #keys - 1 do
+                obj = obj[keys[i]]
             end
-        local enabled = false
+            return obj and obj[keys[#keys]]
+        end
+
+        local enabled = getConfigValue() or false
 
         local function updateVisuals()
             if enabled then
@@ -636,6 +660,8 @@ local function CreateUI()
             end
             obj[keys[#keys]] = enabled
         end
+
+        updateVisuals()
 
         toggle.MouseButton1Click:Connect(function()
             enabled = not enabled
@@ -796,6 +822,47 @@ local function CreateUI()
         bindValue.TextXAlignment = Enum.TextXAlignment.Right
         bindValue.Parent = bind
 
+        local parts = {}
+        for part in configPath:gmatch("[%w_]+") do
+            table.insert(parts, part)
+        end
+
+        local function formatBindValue(value)
+            if typeof(value) ~= "EnumItem" then
+                return tostring(value or "NONE")
+            end
+
+            if value.EnumType == Enum.UserInputType then
+                if value == Enum.UserInputType.MouseButton1 then
+                    return "MB1"
+                elseif value == Enum.UserInputType.MouseButton2 then
+                    return "MB2"
+                elseif value == Enum.UserInputType.MouseButton3 then
+                    return "MB3"
+                end
+            end
+
+            return value.Name
+        end
+
+        local function getBindValue()
+            local obj = Config
+            for i = 1, #parts - 1 do
+                obj = obj[parts[i]]
+            end
+            return obj and obj[parts[#parts]]
+        end
+
+        local function setBindValue(value)
+            local obj = Config
+            for i = 1, #parts - 1 do
+                obj = obj[parts[i]]
+            end
+            obj[parts[#parts]] = value
+        end
+
+        bindValue.Text = formatBindValue(getBindValue())
+
         local isBinding = false
 
         bind.MouseButton1Click:Connect(function()
@@ -808,40 +875,15 @@ local function CreateUI()
             conn = UserInputService.InputBegan:Connect(function(input, gameProcessed)
                 if gameProcessed then return end
                 if input.UserInputType == Enum.UserInputType.Keyboard then
-                    bindValue.Text = input.KeyCode.Name
+                    setBindValue(input.KeyCode)
+                    bindValue.Text = formatBindValue(input.KeyCode)
                     bindValue.TextColor3 = UI.Colors.Accent
-                    local obj = Config
-                    for part in configPath:gmatch("[%w_]+") do
-                        obj = obj[part]
-                    end
-                    if Config[configPath:match("^[%w_]+")] then
-                        local parts = {}
-                        for part in configPath:gmatch("[%w_]+") do
-                            table.insert(parts, part)
-                        end
-                        local target = Config
-                        for i = 1, #parts - 1 do
-                            target = target[parts[i]]
-                        end
-                        target[parts[#parts]] = input.KeyCode
-                    end
                 elseif input.UserInputType == Enum.UserInputType.MouseButton1 or
                        input.UserInputType == Enum.UserInputType.MouseButton2 or
                        input.UserInputType == Enum.UserInputType.MouseButton3 then
-                    local names = {[0]="MB1", [1]="MB2", [2]="MB3"}
-                    local idx = input.UserInputType == Enum.UserInputType.MouseButton2 and 1 or
-                               input.UserInputType == Enum.UserInputType.MouseButton3 and 2 or 0
-                    bindValue.Text = names[idx]
+                    setBindValue(input.UserInputType)
+                    bindValue.Text = formatBindValue(input.UserInputType)
                     bindValue.TextColor3 = UI.Colors.Accent
-                    local parts = {}
-                    for part in configPath:gmatch("[%w_]+") do
-                        table.insert(parts, part)
-                    end
-                    local target = Config
-                    for i = 1, #parts - 1 do
-                        target = target[parts[i]]
-                    end
-                    target[parts[#parts]] = input.UserInputType
                 end
                 isBinding = false
                 conn:Disconnect()
@@ -899,6 +941,15 @@ local function CreateUI()
         local keys = {}
         for part in configPath:gmatch("[%w_]+") do
             table.insert(keys, part)
+        end
+
+        local obj = Config
+        for i = 1, #keys - 1 do
+            obj = obj[keys[i]]
+        end
+        local currentValue = obj[keys[#keys]]
+        if currentValue then
+            ddValue.Text = tostring(currentValue)
         end
 
         local ddOpen = false
@@ -1079,7 +1130,7 @@ for _, v in pairs(Crosshair) do
     v.Visible = false
     v.Transparency = 1
     v.Thickness = 1
-    v.Color = Color3.new(255, 255, 255)
+    v.Color = Color3.fromRGB(255, 255, 255)
 end
 
 -- [[ Main Loop ]]
