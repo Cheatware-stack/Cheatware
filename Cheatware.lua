@@ -296,7 +296,7 @@ local Window = Library:CreateWindow({
     AutoShow = true,
     Resizable = false,
     TabPadding = 8,
-    MenuFadeTime = 0.2
+    MenuFadeTime = 0
 })
 
 local Tabs = {
