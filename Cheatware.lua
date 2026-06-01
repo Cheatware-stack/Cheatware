@@ -430,13 +430,27 @@ ThemeManager:ApplyToTab(Tabs.Settings)
 pcall(function() SaveManager:LoadAutoloadConfig() end)
 
 -- ========================== LOOPS =============================
+-- WindowFocused pause: kill all work when Roblox window isn't active
+local WindowFocused = true
+UserInputService.WindowFocused:Connect(function() WindowFocused = true end)
+UserInputService.WindowFocusReleased:Connect(function() WindowFocused = false end)
+
 local AimLoop = RunService.RenderStepped:Connect(function()
     if Library.Unloaded then return end
+    if not WindowFocused then return end
+
+    -- Aimbot disabled? Skip everything except hiding the FOV circle once.
+    if not S.Aimbot.Enabled then
+        if FOVCircle.Visible then FOVCircle.Visible = false end
+        return
+    end
+
     local mLoc = UserInputService:GetMouseLocation()
     FOVCircle.Position = mLoc
     FOVCircle.Radius = S.Aimbot.FOV
-    FOVCircle.Visible = S.Aimbot.Enabled and S.Aimbot.ShowFOV
-    if S.Aimbot.Enabled and Options.AimKey and Options.AimKey:GetState() then
+    FOVCircle.Visible = S.Aimbot.ShowFOV
+
+    if Options.AimKey and Options.AimKey:GetState() then
         aimAt(getClosestPlayer())
     end
 end)
@@ -444,6 +458,7 @@ end)
 local lastESP = 0
 local ESPLoop = RunService.Heartbeat:Connect(function()
     if Library.Unloaded then return end
+    if not WindowFocused then return end
     local interval = 1 / S.ESP.UpdateRate
     if tick() - lastESP < interval then return end
     lastESP = tick()
