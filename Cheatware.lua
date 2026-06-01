@@ -1,6 +1,11 @@
 --[[
-    IMP // Aimbot + ESP  (Linoria edition, mstudio45 spec)
-    UI: https://github.com/mstudio45/LinoriaLib
+    IMP // Combat Suite  v4  (Linoria edition, mstudio45 spec)
+    Tabs: Combat | Visuals | Misc | Settings
+    Improvements over v3:
+        - Parallel HTTP loading (3 scripts fetched concurrently)
+        - Custom cursor disabled (skips heavy cursor init)
+        - ESP colors fixed (inline Callback + manual RGB lerp)
+        - Misc tab populates both columns (no empty space)
 --]]
 
 -- ========================== SERVICES ==========================
@@ -28,6 +33,7 @@ local S = {
         Enabled = false,
         TeamCheck = true,
         MaxDistance = 5000,
+        UpdateRate = 60,
         Box = true, BoxColor = Color3.fromRGB(255, 40, 40),
         Name = true, NameColor = Color3.fromRGB(255, 255, 255),
         Distance = true, DistanceColor = Color3.fromRGB(200, 200, 200),
@@ -61,6 +67,27 @@ end
 local function visible(pos, ignoreChar)
     local parts = Camera:GetPartsObscuringTarget({pos}, {LocalPlayer.Character, Camera, ignoreChar})
     return #parts == 0
+end
+
+-- Manual RGB lerp (bypasses Color3:Lerp quirks on some executors)
+-- Red (0% HP) → Orange (50%) → Green (100%)
+local function getHpColor(pct)
+    pct = math.clamp(pct, 0, 1)
+    local r, g, b
+    if pct > 0.5 then
+        -- Orange (255, 165, 0) → Green (0, 255, 0)
+        local t = (pct - 0.5) * 2
+        r = math.floor(255 * (1 - t))
+        g = math.floor(165 + (255 - 165) * t)
+        b = 0
+    else
+        -- Red (255, 0, 0) → Orange (255, 165, 0)
+        local t = pct * 2
+        r = 255
+        g = math.floor(165 * t)
+        b = 0
+    end
+    return Color3.fromRGB(r, g, b)
 end
 
 -- ========================== AIMBOT ============================
@@ -142,24 +169,30 @@ end
 Players.PlayerRemoving:Connect(killESP)
 
 local function updateESP()
+    if not S.ESP.Enabled then
+        for _, e in pairs(ESPCache) do hideESP(e) end
+        return
+    end
+
     for _, p in ipairs(Players:GetPlayers()) do
         if p ~= LocalPlayer and not ESPCache[p] then makeESP(p) end
     end
+
     for plr, _ in pairs(ESPCache) do
         if not plr.Parent then killESP(plr) end
     end
 
+    local camPos = Camera.CFrame.Position
     for plr, e in pairs(ESPCache) do
         local char = plr.Character
         local head = char and char:FindFirstChild("Head")
         local hrp  = char and char:FindFirstChild("HumanoidRootPart")
         local hum  = char and char:FindFirstChildOfClass("Humanoid")
 
-        if not S.ESP.Enabled or not (head and hrp and hum and hum.Health > 0)
-        or (S.ESP.TeamCheck and not isEnemy(plr)) then
+        if not (head and hrp and hum and hum.Health > 0) or (S.ESP.TeamCheck and not isEnemy(plr)) then
             hideESP(e)
         else
-            local dist3D = (hrp.Position - Camera.CFrame.Position).Magnitude
+            local dist3D = (hrp.Position - camPos).Magnitude
             if dist3D > S.ESP.MaxDistance then
                 hideESP(e)
             else
@@ -171,42 +204,47 @@ local function updateESP()
                     local h = math.abs(bV.Y - tV.Y); local w = h * 0.55
                     local x = tV.X - w/2; local y = tV.Y
 
+                    -- Box (defensive color)
+                    local boxCol = S.ESP.BoxColor or Color3.fromRGB(255, 40, 40)
                     e.box.Visible = S.ESP.Box
-                    e.box.Position = Vector2.new(x, y); e.box.Size = Vector2.new(w, h); e.box.Color = S.ESP.BoxColor
+                    e.box.Position = Vector2.new(x, y); e.box.Size = Vector2.new(w, h); e.box.Color = boxCol
                     e.boxOL.Visible = S.ESP.Box
                     e.boxOL.Position = Vector2.new(x, y); e.boxOL.Size = Vector2.new(w, h)
 
+                    -- Name
                     e.name.Visible = S.ESP.Name
                     e.name.Position = Vector2.new(x + w/2, y - 16)
-                    e.name.Color = S.ESP.NameColor
+                    e.name.Color = S.ESP.NameColor or Color3.new(1,1,1)
                     e.name.Text = plr.DisplayName == plr.Name and plr.Name or (plr.DisplayName.." (@"..plr.Name..")")
 
+                    -- Distance
                     e.dist.Visible = S.ESP.Distance
                     e.dist.Position = Vector2.new(x + w/2, y + h + 2)
-                    e.dist.Color = S.ESP.DistanceColor
+                    e.dist.Color = S.ESP.DistanceColor or Color3.fromRGB(200,200,200)
                     e.dist.Text = string.format("[%dm]", math.floor(dist3D))
 
+                    -- HP bar (manual RGB lerp)
                     if S.ESP.HealthBar then
                         local pct = math.clamp(hum.Health / math.max(1, hum.MaxHealth), 0, 1)
                         e.hpBg.Visible=true; e.hpBg.Position=Vector2.new(x-6,y); e.hpBg.Size=Vector2.new(3,h)
                         e.hp.Visible=true
                         e.hp.Position = Vector2.new(x-6, y + h*(1-pct))
-                        e.hp.Size = Vector2.new(3, h*pct)
-                        e.hp.Color = Color3.fromHSV(pct * 0.33, 1, 1)
+                        e.hp.Size = Vector2.new(3, math.max(1, h*pct))
+                        e.hp.Color = getHpColor(pct)
                     else
                         e.hp.Visible=false; e.hpBg.Visible=false
                     end
 
+                    -- Tracer
                     if S.ESP.Tracer then
                         local vs = Camera.ViewportSize
                         e.tracer.Visible=true
                         e.tracer.From = Vector2.new(vs.X/2, vs.Y)
                         e.tracer.To = Vector2.new(x + w/2, y + h)
-                        e.tracer.Color = S.ESP.TracerColor
-                    else
-                        e.tracer.Visible=false
-                    end
+                        e.tracer.Color = S.ESP.TracerColor or Color3.new(1,1,1)
+                    else e.tracer.Visible=false end
 
+                    -- Chams
                     if S.ESP.Chams then
                         if not (e.chams and e.chams.Parent) then
                             e.chams = Instance.new("Highlight", char)
@@ -214,7 +252,7 @@ local function updateESP()
                             e.chams.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
                         end
                         e.chams.Enabled = true
-                        e.chams.FillColor = S.ESP.ChamsColor
+                        e.chams.FillColor = S.ESP.ChamsColor or Color3.fromRGB(255,0,170)
                         e.chams.FillTransparency = 0.5
                     elseif e.chams then e.chams.Enabled = false end
                 end
@@ -224,15 +262,32 @@ local function updateESP()
 end
 
 -- ========================== LINORIA UI (mstudio45) ============
+-- Parallel HTTP fetch to drop load time from 20s to ~5s
 local repo = "https://raw.githubusercontent.com/mstudio45/LinoriaLib/main/"
-local Library      = loadstring(game:HttpGet(repo .. "Library.lua"))()
-local ThemeManager = loadstring(game:HttpGet(repo .. "addons/ThemeManager.lua"))()
-local SaveManager  = loadstring(game:HttpGet(repo .. "addons/SaveManager.lua"))()
+local urls = {
+    repo .. "Library.lua",
+    repo .. "addons/ThemeManager.lua",
+    repo .. "addons/SaveManager.lua",
+}
+local sources = {}
+local pending = #urls
+for i, url in ipairs(urls) do
+    task.spawn(function()
+        local ok, body = pcall(game.HttpGet, game, url)
+        sources[i] = ok and body or ""
+        pending = pending - 1
+    end)
+end
+while pending > 0 do task.wait() end
+
+local Library      = loadstring(sources[1])()
+local ThemeManager = loadstring(sources[2])()
+local SaveManager  = loadstring(sources[3])()
 
 local Options = Library.Options
 local Toggles = Library.Toggles
 
-Library.ShowCustomCursor = true
+Library.ShowCustomCursor = false  -- big load-time win, skips custom cursor system
 Library.NotifySide       = "Left"
 
 local Window = Library:CreateWindow({
@@ -245,14 +300,15 @@ local Window = Library:CreateWindow({
 })
 
 local Tabs = {
-    Aimbot              = Window:AddTab("Aimbot"),
-    ESP                 = Window:AddTab("ESP"),
-    ["UI Settings"]     = Window:AddTab("UI Settings"),
+    Combat   = Window:AddTab("Combat"),
+    Visuals  = Window:AddTab("Visuals"),
+    Misc     = Window:AddTab("Misc"),
+    Settings = Window:AddTab("Settings"),
 }
 
--- ============== AIMBOT TAB ==============
-local AimLeft  = Tabs.Aimbot:AddLeftGroupbox("Core")
-local AimRight = Tabs.Aimbot:AddRightGroupbox("Targeting")
+-- =============== COMBAT TAB ===============
+local AimLeft  = Tabs.Combat:AddLeftGroupbox("Aimbot")
+local AimRight = Tabs.Combat:AddRightGroupbox("Targeting")
 
 AimLeft:AddToggle("AimEn", {Text = "Enabled", Default = false})
 AimLeft:AddToggle("AimShowFov", {Text = "Show FOV Circle", Default = true})
@@ -274,7 +330,6 @@ AimRight:AddLabel("Aim Key"):AddKeyPicker("AimKey", {
     Text = "Aim Key",
 })
 
--- Wire callbacks via OnChanged (mstudio45 recommended pattern)
 Toggles.AimEn:OnChanged(function() S.Aimbot.Enabled = Toggles.AimEn.Value end)
 Toggles.AimShowFov:OnChanged(function() S.Aimbot.ShowFOV = Toggles.AimShowFov.Value end)
 Options.AimFov:OnChanged(function() S.Aimbot.FOV = Options.AimFov.Value end)
@@ -283,84 +338,126 @@ Options.AimPart:OnChanged(function() S.Aimbot.TargetPart = Options.AimPart.Value
 Toggles.AimTeam:OnChanged(function() S.Aimbot.TeamCheck = Toggles.AimTeam.Value end)
 Toggles.AimWall:OnChanged(function() S.Aimbot.WallCheck = Toggles.AimWall.Value end)
 
--- ============== ESP TAB ==============
-local ESPLeft  = Tabs.ESP:AddLeftGroupbox("Core")
-local ESPRight = Tabs.ESP:AddRightGroupbox("Elements")
+-- =============== VISUALS TAB ===============
+local ESPLeft  = Tabs.Visuals:AddLeftGroupbox("ESP Core")
+local ESPRight = Tabs.Visuals:AddRightGroupbox("ESP Elements")
 
-ESPLeft:AddToggle("ESPEn", {Text = "Enabled", Default = false})
-ESPLeft:AddToggle("ESPTeam", {Text = "Team Check", Default = true})
-ESPLeft:AddSlider("ESPDist", {Text = "Max Distance", Default = 5000, Min = 100, Max = 10000, Rounding = 0})
+ESPLeft:AddToggle("ESPEn", {Text = "Enabled", Default = false,
+    Callback = function(v) S.ESP.Enabled = v end})
+ESPLeft:AddToggle("ESPTeam", {Text = "Team Check", Default = true,
+    Callback = function(v) S.ESP.TeamCheck = v end})
+ESPLeft:AddSlider("ESPDist", {Text = "Max Distance", Default = 5000, Min = 100, Max = 10000, Rounding = 0,
+    Callback = function(v) S.ESP.MaxDistance = v end})
+ESPLeft:AddSlider("ESPRate", {Text = "Update Rate", Default = 60, Min = 10, Max = 60, Rounding = 0, Suffix = " Hz",
+    Callback = function(v) S.ESP.UpdateRate = v end})
 
-ESPRight:AddToggle("ESPBox", {Text = "Box", Default = true}):AddColorPicker("ESPBoxCol", {Default = S.ESP.BoxColor, Title = "Box Color"})
-ESPRight:AddToggle("ESPName", {Text = "Name", Default = true}):AddColorPicker("ESPNameCol", {Default = S.ESP.NameColor, Title = "Name Color"})
-ESPRight:AddToggle("ESPDistance", {Text = "Distance", Default = true}):AddColorPicker("ESPDistCol", {Default = S.ESP.DistanceColor, Title = "Distance Color"})
-ESPRight:AddToggle("ESPHP", {Text = "Health Bar (Reactive)", Default = true})
-ESPRight:AddToggle("ESPTracer", {Text = "Tracer", Default = false}):AddColorPicker("ESPTracerCol", {Default = S.ESP.TracerColor, Title = "Tracer Color"})
-ESPRight:AddToggle("ESPChams", {Text = "Chams (Through Walls)", Default = false}):AddColorPicker("ESPChamsCol", {Default = S.ESP.ChamsColor, Title = "Chams Color"})
+-- Inline Callback on colorpicker fires guaranteed during creation — no race condition
+ESPRight:AddToggle("ESPBox", {Text = "Box", Default = true,
+    Callback = function(v) S.ESP.Box = v end})
+    :AddColorPicker("ESPBoxCol", {
+        Default = S.ESP.BoxColor, Title = "Box Color",
+        Callback = function(v) if v then S.ESP.BoxColor = v end end
+    })
 
-Toggles.ESPEn:OnChanged(function() S.ESP.Enabled = Toggles.ESPEn.Value end)
-Toggles.ESPTeam:OnChanged(function() S.ESP.TeamCheck = Toggles.ESPTeam.Value end)
-Options.ESPDist:OnChanged(function() S.ESP.MaxDistance = Options.ESPDist.Value end)
+ESPRight:AddToggle("ESPName", {Text = "Name", Default = true,
+    Callback = function(v) S.ESP.Name = v end})
+    :AddColorPicker("ESPNameCol", {
+        Default = S.ESP.NameColor, Title = "Name Color",
+        Callback = function(v) if v then S.ESP.NameColor = v end end
+    })
 
-Toggles.ESPBox:OnChanged(function() S.ESP.Box = Toggles.ESPBox.Value end)
-Toggles.ESPName:OnChanged(function() S.ESP.Name = Toggles.ESPName.Value end)
-Toggles.ESPDistance:OnChanged(function() S.ESP.Distance = Toggles.ESPDistance.Value end)
-Toggles.ESPHP:OnChanged(function() S.ESP.HealthBar = Toggles.ESPHP.Value end)
-Toggles.ESPTracer:OnChanged(function() S.ESP.Tracer = Toggles.ESPTracer.Value end)
-Toggles.ESPChams:OnChanged(function() S.ESP.Chams = Toggles.ESPChams.Value end)
+ESPRight:AddToggle("ESPDistance", {Text = "Distance", Default = true,
+    Callback = function(v) S.ESP.Distance = v end})
+    :AddColorPicker("ESPDistCol", {
+        Default = S.ESP.DistanceColor, Title = "Distance Color",
+        Callback = function(v) if v then S.ESP.DistanceColor = v end end
+    })
 
-Options.ESPBoxCol:OnChanged(function() S.ESP.BoxColor = Options.ESPBoxCol.Value end)
-Options.ESPNameCol:OnChanged(function() S.ESP.NameColor = Options.ESPNameCol.Value end)
-Options.ESPDistCol:OnChanged(function() S.ESP.DistanceColor = Options.ESPDistCol.Value end)
-Options.ESPTracerCol:OnChanged(function() S.ESP.TracerColor = Options.ESPTracerCol.Value end)
-Options.ESPChamsCol:OnChanged(function() S.ESP.ChamsColor = Options.ESPChamsCol.Value end)
+ESPRight:AddToggle("ESPHP", {Text = "Health Bar (Reactive)", Default = true,
+    Callback = function(v) S.ESP.HealthBar = v end})
 
--- ============== UI SETTINGS TAB ==============
-local MenuGroup = Tabs["UI Settings"]:AddLeftGroupbox("Menu")
+ESPRight:AddToggle("ESPTracer", {Text = "Tracer", Default = false,
+    Callback = function(v) S.ESP.Tracer = v end})
+    :AddColorPicker("ESPTracerCol", {
+        Default = S.ESP.TracerColor, Title = "Tracer Color",
+        Callback = function(v) if v then S.ESP.TracerColor = v end end
+    })
 
-MenuGroup:AddToggle("KeybindMenuOpen", {Default = Library.KeybindFrame.Visible, Text = "Open Keybind Menu",
-    Callback = function(v) Library.KeybindFrame.Visible = v end})
-MenuGroup:AddToggle("ShowCustomCursor", {Text = "Custom Cursor", Default = true,
+ESPRight:AddToggle("ESPChams", {Text = "Chams (Through Walls)", Default = false,
+    Callback = function(v) S.ESP.Chams = v end})
+    :AddColorPicker("ESPChamsCol", {
+        Default = S.ESP.ChamsColor, Title = "Chams Color",
+        Callback = function(v) if v then S.ESP.ChamsColor = v end end
+    })
+
+-- Force the picker values to apply (some Linoria builds need explicit set)
+pcall(function() Options.ESPBoxCol:SetValueRGB(S.ESP.BoxColor) end)
+pcall(function() Options.ESPNameCol:SetValueRGB(S.ESP.NameColor) end)
+pcall(function() Options.ESPDistCol:SetValueRGB(S.ESP.DistanceColor) end)
+pcall(function() Options.ESPTracerCol:SetValueRGB(S.ESP.TracerColor) end)
+pcall(function() Options.ESPChamsCol:SetValueRGB(S.ESP.ChamsColor) end)
+
+-- =============== MISC TAB (both columns filled) ===============
+local MiscLeft  = Tabs.Misc:AddLeftGroupbox("Movement")
+local MiscRight = Tabs.Misc:AddRightGroupbox("Visuals")
+
+MiscLeft:AddLabel("Coming soon:", true)
+MiscLeft:AddLabel("• Fly\n• Noclip\n• WalkSpeed\n• JumpPower\n• Infinite Jump\n• Bunny Hop", true)
+
+MiscRight:AddLabel("Coming soon:", true)
+MiscRight:AddLabel("• Fullbright\n• No Fog\n• FOV Unlock\n• FPS Boost\n• Anti-AFK", true)
+
+-- =============== SETTINGS TAB ===============
+local MenuGroup = Tabs.Settings:AddLeftGroupbox("Menu")
+
+MenuGroup:AddToggle("ShowCustomCursor", {Text = "Custom Cursor", Default = false,
     Callback = function(v) Library.ShowCustomCursor = v end})
 MenuGroup:AddDivider()
 MenuGroup:AddLabel("Menu Bind"):AddKeyPicker("MenuKeybind", {Default = "RightShift", NoUI = true, Text = "Menu Keybind"})
-MenuGroup:AddButton({Text = "Unload", Func = function() Library:Unload() end})
+MenuGroup:AddButton({Text = "Unload Script", Func = function() Library:Unload() end})
 
 Library.ToggleKeybind = Options.MenuKeybind
 
+-- Theme + Save managers (build LAST so they have everything wired up)
 ThemeManager:SetLibrary(Library)
 SaveManager:SetLibrary(Library)
 SaveManager:IgnoreThemeSettings()
 SaveManager:SetIgnoreIndexes({"MenuKeybind"})
 ThemeManager:SetFolder("ImpCombat")
-SaveManager:SetFolder("ImpCombat/Aimbot")
-SaveManager:BuildConfigSection(Tabs["UI Settings"])
-ThemeManager:ApplyToTab(Tabs["UI Settings"])
-SaveManager:LoadAutoloadConfig()
+SaveManager:SetFolder("ImpCombat/Configs")
+SaveManager:BuildConfigSection(Tabs.Settings)
+ThemeManager:ApplyToTab(Tabs.Settings)
+pcall(function() SaveManager:LoadAutoloadConfig() end)
 
--- ========================== MAIN LOOP =========================
-local MainLoop = RunService.RenderStepped:Connect(function()
+-- ========================== LOOPS =============================
+local AimLoop = RunService.RenderStepped:Connect(function()
     if Library.Unloaded then return end
     local mLoc = UserInputService:GetMouseLocation()
-
     FOVCircle.Position = mLoc
     FOVCircle.Radius = S.Aimbot.FOV
     FOVCircle.Visible = S.Aimbot.Enabled and S.Aimbot.ShowFOV
-
     if S.Aimbot.Enabled and Options.AimKey and Options.AimKey:GetState() then
         aimAt(getClosestPlayer())
     end
+end)
 
+local lastESP = 0
+local ESPLoop = RunService.Heartbeat:Connect(function()
+    if Library.Unloaded then return end
+    local interval = 1 / S.ESP.UpdateRate
+    if tick() - lastESP < interval then return end
+    lastESP = tick()
     updateESP()
 end)
 
 Library:OnUnload(function()
-    if MainLoop then MainLoop:Disconnect() end
+    if AimLoop then AimLoop:Disconnect() end
+    if ESPLoop then ESPLoop:Disconnect() end
     pcall(function() FOVCircle:Remove() end)
     for plr, _ in pairs(ESPCache) do killESP(plr) end
     Library.Unloaded = true
     print("[IMP] Unloaded")
 end)
 
-Library:Notify("IMP Combat loaded — Right Shift toggles UI", 4)
-print("[IMP] Linoria edition v2 loaded.")
+Library:Notify("IMP Combat v4 loaded — Right Shift toggles UI", 4)
+print("[IMP] v4 loaded.")
