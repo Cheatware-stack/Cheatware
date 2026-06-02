@@ -40,6 +40,16 @@ local S = {
         HealthBar = true,
         Tracer = false, TracerColor = Color3.fromRGB(255, 255, 255),
         Chams = false, ChamsColor = Color3.fromRGB(255, 0, 170),
+    },
+    SilentAim = {
+        Enabled = false,
+        FOV = 200,
+        ShowFOV = false,
+        FOVColor = Color3.fromRGB(255, 0, 170),
+        HitChance = 100,
+        TargetPart = "Head",
+        TeamCheck = true,
+        AliveCheck = true,
     }
 }
 
@@ -99,6 +109,14 @@ FOVCircle.Transparency = 0.7
 FOVCircle.Filled = false
 FOVCircle.Visible = false
 
+local SilentAimCircle = Drawing.new("Circle")
+SilentAimCircle.Thickness = 2
+SilentAimCircle.NumSides = 64
+SilentAimCircle.Color = Color3.fromRGB(255, 0, 170)
+SilentAimCircle.Transparency = 0.7
+SilentAimCircle.Filled = false
+SilentAimCircle.Visible = false
+
 local function getClosestPlayer()
     local closest, closestDist = nil, S.Aimbot.FOV
     local mouseLoc = UserInputService:GetMouseLocation()
@@ -129,6 +147,80 @@ local function aimAt(target)
     local mouseLoc = UserInputService:GetMouseLocation()
     local smoothed = mouseLoc:Lerp(Vector2.new(sp.X, sp.Y), 1 / S.Aimbot.Smoothness)
     pcall(mousemoverel, smoothed.X - mouseLoc.X, smoothed.Y - mouseLoc.Y)
+end
+
+-- ========================== SILENT AIM ========================
+local function findSilentTarget()
+    if not S.SilentAim.Enabled then return nil, nil end
+    if math.random(1, 100) > S.SilentAim.HitChance then return nil, nil end
+
+    local mouseLoc = UserInputService:GetMouseLocation()
+    local bestPos, bestPart, bestDist = nil, nil, S.SilentAim.FOV
+
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer
+        and (not S.SilentAim.TeamCheck or isEnemy(plr))
+        and (not S.SilentAim.AliveCheck or alive(plr)) then
+            local char = plr.Character
+            local part = char and char:FindFirstChild(S.SilentAim.TargetPart)
+            if part then
+                local sp, on = Camera:WorldToViewportPoint(part.Position)
+                if on then
+                    local d = (Vector2.new(sp.X, sp.Y) - mouseLoc).Magnitude
+                    if d < bestDist then
+                        bestDist = d; bestPos = part.Position; bestPart = part
+                    end
+                end
+            end
+        end
+    end
+    return bestPos, bestPart
+end
+
+-- Hook __namecall for Raycast and __index for Mouse.Hit/Target
+local hookmm   = hookmetamethod
+local newcc    = newcclosure or function(f) return f end
+local getncm   = getnamecallmethod
+local checkcal = checkcaller or function() return false end
+
+if hookmm then
+    local oldNamecall
+    oldNamecall = hookmm(game, "__namecall", newcc(function(self, ...)
+        local method = getncm()
+        local args = {...}
+        if S.SilentAim.Enabled and not checkcal() then
+            if method == "Raycast" then
+                local targetPos = findSilentTarget()
+                if targetPos then
+                    local origin = args[1]
+                    args[2] = (targetPos - origin).Unit * 5000
+                    return oldNamecall(self, table.unpack(args))
+                end
+            elseif method == "FindPartOnRay"
+                or method == "FindPartOnRayWithIgnoreList"
+                or method == "FindPartOnRayWithWhitelist" then
+                local targetPos = findSilentTarget()
+                if targetPos then
+                    local origin = args[1].Origin
+                    args[1] = Ray.new(origin, (targetPos - origin).Unit * 5000)
+                    return oldNamecall(self, table.unpack(args))
+                end
+            end
+        end
+        return oldNamecall(self, ...)
+    end))
+
+    local oldIndex
+    oldIndex = hookmm(game, "__index", newcc(function(self, key)
+        if S.SilentAim.Enabled and not checkcal() and self == Mouse then
+            local targetPos, targetPart = findSilentTarget()
+            if targetPos then
+                if key == "Hit"    then return CFrame.new(targetPos) end
+                if key == "Target" then return targetPart end
+            end
+        end
+        return oldIndex(self, key)
+    end))
 end
 
 -- ========================== ESP ===============================
@@ -295,15 +387,15 @@ local Window = Library:CreateWindow({
     Center = true,
     AutoShow = true,
     Resizable = false,
-    TabPadding = 8,
+    TabPadding = 20,
     MenuFadeTime = 0
 })
 
 local Tabs = {
-    Combat   = Window:AddTab("Combat"),
-    Visuals  = Window:AddTab("Visuals"),
-    Misc     = Window:AddTab("Misc"),
-    Settings = Window:AddTab("Settings"),
+    Combat   = Window:AddTab("   Combat   "),
+    Visuals  = Window:AddTab("   Visuals  "),
+    Misc     = Window:AddTab("    Misc    "),
+    Settings = Window:AddTab("  Settings  "),
 }
 
 -- =============== COMBAT TAB ===============
@@ -337,6 +429,39 @@ Options.AimSmooth:OnChanged(function() S.Aimbot.Smoothness = Options.AimSmooth.V
 Options.AimPart:OnChanged(function() S.Aimbot.TargetPart = Options.AimPart.Value end)
 Toggles.AimTeam:OnChanged(function() S.Aimbot.TeamCheck = Toggles.AimTeam.Value end)
 Toggles.AimWall:OnChanged(function() S.Aimbot.WallCheck = Toggles.AimWall.Value end)
+
+-- ============== SILENT AIM (second row in Combat tab) ==============
+local SAimLeft  = Tabs.Combat:AddLeftGroupbox("Silent Aim")
+local SAimRight = Tabs.Combat:AddRightGroupbox("Silent Aim Settings")
+
+SAimLeft:AddToggle("SAEn", {Text = "Enabled", Default = false,
+    Callback = function(v) S.SilentAim.Enabled = v end})
+
+SAimLeft:AddToggle("SAShow", {Text = "Show FOV Circle", Default = false,
+    Callback = function(v) S.SilentAim.ShowFOV = v end})
+    :AddColorPicker("SAColor", {
+        Default = S.SilentAim.FOVColor, Title = "FOV Color",
+        Callback = function(v) if v then S.SilentAim.FOVColor = v end end
+    })
+
+SAimLeft:AddSlider("SAFOV", {Text = "FOV", Default = 200, Min = 50, Max = 1000, Rounding = 0, Suffix = "px",
+    Callback = function(v) S.SilentAim.FOV = v end})
+
+SAimLeft:AddSlider("SAChance", {Text = "Hit Chance", Default = 100, Min = 1, Max = 100, Rounding = 0, Suffix = "%",
+    Callback = function(v) S.SilentAim.HitChance = v end})
+
+SAimRight:AddDropdown("SAPart", {
+    Text = "Target Part",
+    Values = {"Head", "UpperTorso", "HumanoidRootPart", "Torso"},
+    Default = "Head", Multi = false,
+    Callback = function(v) S.SilentAim.TargetPart = v end
+})
+SAimRight:AddToggle("SATeam", {Text = "Team Check", Default = true,
+    Callback = function(v) S.SilentAim.TeamCheck = v end})
+SAimRight:AddToggle("SAAlive", {Text = "Alive Check", Default = true,
+    Callback = function(v) S.SilentAim.AliveCheck = v end})
+
+pcall(function() Options.SAColor:SetValueRGB(S.SilentAim.FOVColor) end)
 
 -- =============== VISUALS TAB ===============
 local ESPLeft  = Tabs.Visuals:AddLeftGroupbox("ESP Core")
@@ -439,9 +564,15 @@ local AimLoop = RunService.RenderStepped:Connect(function()
     if Library.Unloaded then return end
     if not WindowFocused then return end
 
-    -- Aimbot disabled? Skip everything except hiding the FOV circle once.
+    -- Aimbot disabled? hide aimbot circle but still update silent aim circle
     if not S.Aimbot.Enabled then
         if FOVCircle.Visible then FOVCircle.Visible = false end
+        -- still update silent aim circle independently
+        local mLoc = UserInputService:GetMouseLocation()
+        SilentAimCircle.Position = mLoc
+        SilentAimCircle.Radius = S.SilentAim.FOV
+        SilentAimCircle.Color = S.SilentAim.FOVColor or Color3.fromRGB(255, 0, 170)
+        SilentAimCircle.Visible = S.SilentAim.Enabled and S.SilentAim.ShowFOV
         return
     end
 
@@ -449,6 +580,12 @@ local AimLoop = RunService.RenderStepped:Connect(function()
     FOVCircle.Position = mLoc
     FOVCircle.Radius = S.Aimbot.FOV
     FOVCircle.Visible = S.Aimbot.ShowFOV
+
+    -- Silent aim FOV circle (also mouse-anchored)
+    SilentAimCircle.Position = mLoc
+    SilentAimCircle.Radius = S.SilentAim.FOV
+    SilentAimCircle.Color = S.SilentAim.FOVColor or Color3.fromRGB(255, 0, 170)
+    SilentAimCircle.Visible = S.SilentAim.Enabled and S.SilentAim.ShowFOV
 
     if Options.AimKey and Options.AimKey:GetState() then
         aimAt(getClosestPlayer())
@@ -469,6 +606,7 @@ Library:OnUnload(function()
     if AimLoop then AimLoop:Disconnect() end
     if ESPLoop then ESPLoop:Disconnect() end
     pcall(function() FOVCircle:Remove() end)
+    pcall(function() SilentAimCircle:Remove() end)
     for plr, _ in pairs(ESPCache) do killESP(plr) end
     Library.Unloaded = true
     print("[IMP] Unloaded")
