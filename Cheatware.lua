@@ -150,6 +150,21 @@ local function aimAt(target)
 end
 
 -- ========================== SILENT AIM ========================
+-- IsShooting gate: silent aim ONLY spoofs while LMB is held.
+-- Without this, hooking Mouse.Hit/Raycast affects movement, ground
+-- detection, camera direction, etc.  Causes desync / can't move.
+local IsShooting = false
+UserInputService.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        IsShooting = true
+    end
+end)
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        IsShooting = false
+    end
+end)
+
 local function findSilentTarget()
     if not S.SilentAim.Enabled then return nil, nil end
     if math.random(1, 100) > S.SilentAim.HitChance then return nil, nil end
@@ -178,6 +193,7 @@ local function findSilentTarget()
 end
 
 -- Hook __namecall for Raycast and __index for Mouse.Hit/Target
+-- Both gated by IsShooting to avoid breaking movement/camera/replication.
 local hookmm   = hookmetamethod
 local newcc    = newcclosure or function(f) return f end
 local getncm   = getnamecallmethod
@@ -188,7 +204,7 @@ if hookmm then
     oldNamecall = hookmm(game, "__namecall", newcc(function(self, ...)
         local method = getncm()
         local args = {...}
-        if S.SilentAim.Enabled and not checkcal() then
+        if S.SilentAim.Enabled and IsShooting and not checkcal() then
             if method == "Raycast" then
                 local targetPos = findSilentTarget()
                 if targetPos then
@@ -212,7 +228,7 @@ if hookmm then
 
     local oldIndex
     oldIndex = hookmm(game, "__index", newcc(function(self, key)
-        if S.SilentAim.Enabled and not checkcal() and self == Mouse then
+        if S.SilentAim.Enabled and IsShooting and not checkcal() and self == Mouse then
             local targetPos, targetPart = findSilentTarget()
             if targetPos then
                 if key == "Hit"    then return CFrame.new(targetPos) end
